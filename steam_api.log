@@ -1,6 +1,0 @@
-ERROR:discord.ext.commands.bot:Ignoring exception in command None
-discord.ext.commands.errors.CommandNotFound: Command "BeersNight" is not found
-ERROR:discord.ext.commands.bot:Ignoring exception in command None
-discord.ext.commands.errors.CommandNotFound: Command "enOfBeer" is not found
-ERROR:discord.ext.commands.bot:Ignoring exception in command None
-discord.ext.commands.errors.CommandNotFound: Command "estado_juegos" is not found

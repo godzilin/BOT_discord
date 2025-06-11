@@ -3,8 +3,12 @@ import discord
 from discord.ext import commands
 import os
 import traceback
-#import nacl as PyNacl
+import nacl as PyNacl
+from dotenv import load_dotenv
 
+#from keep_alive import keep_alive
+
+#keep_alive()  # Inicia el servidor web para mantener el bot activo
 
 # Define los intents necesarios para tu bot
 intents = discord.Intents.default()
@@ -22,7 +26,7 @@ async def on_ready():
     print('Cargando extensiones...')
     
     # Lista de cogs que intentaremos cargar al inicio
-    cogs_to_load = ['cogs.basico', 'cogs.cumpleanos', 'cogs.flexionesdelguille', 'cogs.magik', 'cogs.eventosjuegos', 'cogs.BeerNight','cogs.buttontest', 'cogs.robusotrabaja','cogs.blackjack']
+    cogs_to_load = ['cogs.basico', 'cogs.cumpleanos', 'cogs.flexionesdelguille', 'cogs.eventosjuegos', 'cogs.BeerNight','cogs.buttontest', 'cogs.robusotrabaja']
 
     for cog in cogs_to_load:
         try:
@@ -46,8 +50,8 @@ async def reload_cog(ctx, extension: str):
         print(f'Error al recargar el cog "{extension}": {e}')
 
 
-
-token = 'OTM1ODgwNDU3NTA4MjQ5NjUw.GUr1ZM.tfDGO_wzpxZzVKzxiI1lQyaNJJIjaNzQeNTPM4'
+load_dotenv()  # Carga las variables de entorno desde el archivo .env
+token = os.getenv("DISCORD_TOKEN")  # Asegúrate de que tienes un archivo .env con tu token
 
 if token:
     bot.run(token)

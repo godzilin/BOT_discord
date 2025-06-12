@@ -5,10 +5,9 @@ import os
 import traceback
 import nacl as PyNacl
 from dotenv import load_dotenv
+from keep_alive import keep_alive
 
-#from keep_alive import keep_alive
-
-#keep_alive()  # Inicia el servidor web para mantener el bot activo
+keep_alive()  # Inicia el servidor web para mantener el bot activo
 
 # Define los intents necesarios para tu bot
 intents = discord.Intents.default()
@@ -26,7 +25,7 @@ async def on_ready():
     print('Cargando extensiones...')
     
     # Lista de cogs que intentaremos cargar al inicio
-    cogs_to_load = ['cogs.basico', 'cogs.cumpleanos', 'cogs.flexionesdelguille', 'cogs.eventosjuegos', 'cogs.BeerNight', 'cogs.robusotrabaja']
+    cogs_to_load = ['cogs.basico', 'cogs.cumpleanos', 'cogs.flexionesdelguille', 'cogs.eventosjuegos', 'cogs.BeerNight', 'cogs.robusotrabaja','cogs.voicechat']
 
     for cog in cogs_to_load:
         try:

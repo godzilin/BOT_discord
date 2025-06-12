@@ -4,53 +4,51 @@ from datetime import datetime, time
 import asyncio
 import json
 import os
+from typing import Dict, Optional
 
 class HorarioTrabajo(commands.Cog):
+    __slots__ = ('bot', 'archivo_horarios', 'horarios', 'canal_default_name', 'dias_semana')
+    
+    DIAS_SEMANA = {
+        0: 'lunes', 1: 'martes', 2: 'miercoles', 3: 'jueves', 
+        4: 'viernes', 5: 'sabado', 6: 'domingo'
+    }
+
     def __init__(self, bot):
         self.bot = bot
-        # Cambia la ruta para guardar los horarios en la carpeta json
         self.archivo_horarios = os.path.join("json", "horarios.json")
-        # Diccionario para almacenar horarios: {user_id: {dia: {'entrada': 'HH:MM', 'salida': 'HH:MM', 'canal': channel_id}}}
-        self.horarios = {}
-        # Nombre del canal por defecto
+        self.horarios: Dict = {}
         self.canal_default_name = "el-cónclave-de-los-racistas"
-        # Días de la semana
-        self.dias_semana = {
-            0: 'lunes', 1: 'martes', 2: 'miercoles', 3: 'jueves', 
-            4: 'viernes', 5: 'sabado', 6: 'domingo'
-        }
-        # Cargar horarios existentes
+        self.dias_semana = self.DIAS_SEMANA
+        self._ensure_json_dir()
         self.cargar_horarios()
-        # Iniciar el task que revisa los horarios
         self.revisar_horarios.start()
     
+    def _ensure_json_dir(self) -> None:
+        """Asegura que existe el directorio json"""
+        os.makedirs(os.path.dirname(self.archivo_horarios), exist_ok=True)
+    
     def cog_unload(self):
-        """Detener el task y guardar horarios al descargar el cog"""
         self.revisar_horarios.cancel()
         self.guardar_horarios()
     
-    def cargar_horarios(self):
-        """Cargar horarios desde el archivo JSON"""
+    def cargar_horarios(self) -> None:
+        if not os.path.exists(self.archivo_horarios):
+            self.horarios = {}
+            return
+        
         try:
-            if os.path.exists(self.archivo_horarios):
-                with open(self.archivo_horarios, 'r', encoding='utf-8') as f:
-                    self.horarios = json.load(f)
-                print(f"Horarios cargados desde {self.archivo_horarios}")
-            else:
-                self.horarios = {}
-                print("Archivo de horarios no encontrado, iniciando con horarios vacíos")
-        except Exception as e:
-            print(f"Error cargando horarios: {e}")
+            with open(self.archivo_horarios, 'r', encoding='utf-8') as f:
+                self.horarios = json.load(f)
+        except Exception:
             self.horarios = {}
     
-    def guardar_horarios(self):
-        """Guardar horarios en el archivo JSON"""
+    def guardar_horarios(self) -> None:
         try:
             with open(self.archivo_horarios, 'w', encoding='utf-8') as f:
-                json.dump(self.horarios, f, indent=2, ensure_ascii=False)
-            print(f"Horarios guardados en {self.archivo_horarios}")
-        except Exception as e:
-            print(f"Error guardando horarios: {e}")
+                json.dump(self.horarios, f, ensure_ascii=False)
+        except Exception:
+            pass
     
     @commands.command(name='horario', help='Establece tu horario de trabajo. Formato: ºhorario <día> HH:MM HH:MM #canal')
     async def establecer_horario(self, ctx, dia: str = None, entrada: str = None, salida: str = None, canal: discord.TextChannel = None):

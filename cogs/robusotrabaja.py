@@ -126,14 +126,15 @@ class HorarioTrabajo(commands.Cog):
             )
             await ctx.send(embed=embed)
     
-    @commands.command(name='ver_horario', help='Muestra tu horario semanal.')
-    async def ver_horario(self, ctx):
-        """Muestra el horario semanal del usuario."""
-        user_id_str = str(ctx.author.id)
+    @commands.command(name='ver_horario', help='Muestra tu horario semanal o el de otro usuario.')
+    async def ver_horario(self, ctx, *, usuario: discord.Member = None):
+        """Muestra el horario semanal del usuario especificado o del autor del comando."""
+        target_user = usuario if usuario else ctx.author
+        user_id_str = str(target_user.id)
         if user_id_str not in self.horarios or not self.horarios[user_id_str]:
             embed = discord.Embed(
                 title="📅 Sin Horarios",
-                description="No tienes horarios establecidos. Usa `ºhorario <día> HH:MM HH:MM #canal` para configurarlos.",
+                description=f"{'No tienes' if target_user == ctx.author else f'{target_user.display_name} no tiene'} horarios establecidos.",
                 color=0xffaa00
             )
             await ctx.send(embed=embed)
@@ -142,7 +143,7 @@ class HorarioTrabajo(commands.Cog):
         horarios_usuario = self.horarios[user_id_str]
         
         embed = discord.Embed(
-            title="📅 Tu Horario Semanal",
+            title=f"📅 Horario Semanal de {target_user.display_name}",
             color=0x0099ff
         )
         

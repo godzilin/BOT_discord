@@ -25,7 +25,7 @@ async def on_ready():
     print('Cargando extensiones...')
     
     # Lista de cogs que intentaremos cargar al inicio
-    cogs_to_load = ['cogs.basico', 'cogs.cumpleanos', 'cogs.flexionesdelguille', 'cogs.eventosjuegos', 'cogs.BeerNight', 'cogs.robusotrabaja','cogs.voicechat']
+    cogs_to_load = ['cogs.basico', 'cogs.cumpleanos', 'cogs.flexionesdelguille', 'cogs.eventosjuegos', 'cogs.BeerNight', 'cogs.robusotrabaja','cogs.voicechat','cogs.magik']
 
     for cog in cogs_to_load:
         try:

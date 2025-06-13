@@ -4,7 +4,6 @@ from discord.ext import commands
 import os
 import traceback
 import nacl as PyNacl
-from dotenv import load_dotenv
 from keep_alive import keep_alive
 
 keep_alive()  # Inicia el servidor web para mantener el bot activo
@@ -49,8 +48,7 @@ async def reload_cog(ctx, extension: str):
         print(f'Error al recargar el cog "{extension}": {e}')
 
 
-load_dotenv()  # Carga las variables de entorno desde el archivo .env
-token = os.getenv("DISCORD_TOKEN")  # Asegúrate de que tienes un archivo .env con tu token
+token = os.environ.get("DISCORD_TOKEN") # Así se lee desde los Secrets de Replit
 
 if token:
     bot.run(token)

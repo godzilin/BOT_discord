@@ -1,6 +1,6 @@
 # Este es el comando que se ejecutará al pulsar "Run"
 run = "python main.py"
-modules = ["python-3.11"]
+modules = ["python-3.11", "python-base-3.13"]
 
 # Esta es la lista de paquetes que Replit instalará automáticamente.
 # Contiene todo lo necesario de tu lista original para que el bot funcione online.
@@ -8,7 +8,7 @@ modules = ["python-3.11"]
 
 [nix]
 channel = "stable-23_11" # Usamos un canal estable y probado de Nix
-packages = ["freetype", "gobject-introspection", "gtk3", "lcms2", "libayatana-appindicator", "libffi", "libimagequant", "libjpeg", "libsodium", "libtiff", "libwebp", "libxcrypt", "openjpeg", "pkg-config", "python311Packages.audioop-lts", "python311Packages.colorama", "python311Packages.discord-py", "python311Packages.flask", "python311Packages.numpy", "python311Packages.pillow", "python311Packages.psutil", "python311Packages.pynacl", "python311Packages.yt-dlp", "tcl", "tk", "xvfb-run", "zlib"]
+packages = ["freetype", "gobject-introspection", "gtk3", "lcms2", "libGL", "libGLU", "libayatana-appindicator", "libffi", "libimagequant", "libjpeg", "libsodium", "libtiff", "libwebp", "libxcrypt", "openjpeg", "pkg-config", "python311Packages.audioop-lts", "python311Packages.colorama", "python311Packages.discord-py", "python311Packages.flask", "python311Packages.numpy", "python311Packages.pillow", "python311Packages.psutil", "python311Packages.pynacl", "python311Packages.yt-dlp", "tcl", "tk", "xvfb-run", "zlib", "python-launcher"]
 
 [deps]
 "discord.py" = "*"

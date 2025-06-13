@@ -1,3 +1,5 @@
+import os
+import json
 from datetime import datetime, timedelta
 import discord
 from discord.ext import commands, tasks
@@ -13,47 +15,130 @@ class JugadorInfo:
     """Clase para almacenar información de un jugador"""
     display_name: str
     current_game: Optional[str]
-    avatar_url: str  # Añadimos el avatar
+    avatar_url: str
 
 @dataclass
 class GameState:
-    """Estado de un juego"""
+    """Estado completo de un juego con persistencia"""
     active_players: Set[int] = field(default_factory=set)
     start_time: Optional[datetime] = None
     notification_message: Optional[discord.Message] = None
     tracking_start: Optional[datetime] = None
+    event_id: Optional[int] = None
+    last_update: Optional[datetime] = None
+    player_names: List[str] = field(default_factory=list)
 
-class EventosJuegos(commands.Cog):
-    """Cog para manejar eventos de juegos y monitoreo de jugadores"""
+class EventosJuegosOptimizado(commands.Cog):
+    """Cog optimizado para eventos de juegos con persistencia completa"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.roles_monitoreados = frozenset([631903790156480532, 777931594500407327])
-        self.games_state: Dict[str, GameState] = {}  # Combina varios dictionaries en uno
-        self.eventos_activos: Set[str] = set()
-        self.last_check = discord.utils.utcnow()
-        self.check_interval = 20
 
-        # Configuración de canales
+        # Configuración principal
+        self.roles_monitoreados = frozenset([631903790156480532, 777931594500407327])
+        self.EVENTS_FILE = "json/events_data.json"
+        self.NOTIFICATION_CHANNEL = 498474737563861004
         self.channel_id = 792184660091338784
         self.notification_channel_id = 498474737563861004
         self.robuso_id = 430508168385134622
 
-        # Almacenar eventos activos por guilda
-        self.active_events = {}  # {guild_id: {game_name: event_id}}
+        # Estado unificado y optimizado
+        self.games_state: Dict[str, GameState] = {}
+        self.eventos_activos: Set[str] = set()
 
-        # Iniciar tasks con intervalos optimizados
-        self.check_games.change_interval(seconds=self.check_interval)
-        self.check_scheduled_events.change_interval(minutes=1)
-        self.check_games.start()
-        self.check_scheduled_events.start()  # Iniciar la tarea de revisión de eventos
+        # Cache optimizado para reducir API calls
+        self._member_cache = {}
+        self._last_member_update = {}
+        self._avatar_cache = {}
 
-    async def get_monitored_players(self, guild) -> List[JugadorInfo]:
-        """Obtiene lista de jugadores monitoreados con su información"""
+        # Control de timing optimizado
+        self.last_check = discord.utils.utcnow()
+        self.check_interval = 30  # Incrementado para menor consumo
+        self.cache_duration = 180  # 3 minutos de cache
+
+        # Cargar estado persistente
+        self.load_persistent_state()
+
+        # Iniciar task principal optimizado
+        self.unified_game_monitor.start()
+
+    def load_persistent_state(self):
+        """Carga el estado persistente optimizado"""
+        try:
+            if os.path.exists(self.EVENTS_FILE):
+                with open(self.EVENTS_FILE, 'r') as f:
+                    data = json.load(f)
+
+                # Reconstruir estados de juego desde datos persistentes
+                for guild_id, guild_events in data.get("active_events", {}).items():
+                    for game_name, event_data in guild_events.items():
+                        state = GameState()
+                        state.event_id = event_data.get("event_id")
+                        state.start_time = datetime.fromisoformat(event_data["start_time"]) if event_data.get("start_time") else None
+                        state.player_names = event_data.get("player_names", [])
+                        state.last_update = datetime.fromisoformat(event_data.get("last_update", datetime.utcnow().isoformat()))
+
+                        self.games_state[game_name] = state
+                        self.eventos_activos.add(game_name)
+
+            else:
+                self.events_data = {"active_events": {}}
+                self.save_persistent_state()
+
+        except Exception as e:
+            print(f"Error loading persistent state: {e}")
+            self.events_data = {"active_events": {}}
+
+    def save_persistent_state(self):
+        """Guarda el estado de manera optimizada (solo cuando hay cambios)"""
+        try:
+            os.makedirs(os.path.dirname(self.EVENTS_FILE), exist_ok=True)
+
+            # Construir datos para guardar desde el estado actual
+            save_data = {"active_events": {}}
+
+            for guild in self.bot.guilds:
+                guild_id = str(guild.id)
+                guild_data = {}
+
+                for game_name, state in self.games_state.items():
+                    if state.event_id and len(state.active_players) > 0:
+                        guild_data[game_name] = {
+                            "event_id": state.event_id,
+                            "start_time": state.start_time.isoformat() if state.start_time else None,
+                            "last_update": datetime.utcnow().isoformat(),
+                            "player_names": state.player_names,
+                            "channel_message": {
+                                "message_id": state.notification_message.id if state.notification_message else None,
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
+                        }
+
+                if guild_data:
+                    save_data["active_events"][guild_id] = guild_data
+
+            with open(self.EVENTS_FILE, 'w') as f:
+                json.dump(save_data, f, indent=2)
+
+        except Exception as e:
+            print(f"Error saving persistent state: {e}")
+
+    async def get_monitored_players_cached(self, guild) -> List[JugadorInfo]:
+        """Versión con cache optimizada para reducir procesamiento"""
+        current_time = discord.utils.utcnow()
+        cache_key = guild.id
+
+        # Verificar cache
+        if (cache_key in self._member_cache and 
+            cache_key in self._last_member_update and
+            (current_time - self._last_member_update[cache_key]).total_seconds() < self.cache_duration):
+            return self._member_cache[cache_key]
+
+        # Actualizar cache
         jugadores = []
         jugadores_procesados = set()
 
-        # Crear cache de roles monitoreados para búsqueda más rápida
+        # Cache de roles para búsqueda optimizada
         roles_cache = {role.id: role for role in guild.roles if role.id in self.roles_monitoreados}
 
         for member in guild.members:
@@ -69,350 +154,170 @@ class EventosJuegos(commands.Cog):
                 jugadores_procesados.add(member.id)
 
                 if current_game:
-                    self._update_game_state(member.id, current_game)
+                    self._update_game_state_optimized(member.id, current_game, member.display_name)
+
+        # Actualizar cache
+        self._member_cache[cache_key] = jugadores
+        self._last_member_update[cache_key] = current_time
 
         return jugadores
 
     def _get_current_game(self, member) -> Optional[str]:
-        """Obtiene el juego actual de un miembro"""
+        """Versión optimizada para obtener juego actual"""
         try:
-            return next(
-                (activity.name for activity in member.activities 
-                 if isinstance(activity, (discord.Game, discord.Activity)) 
-                 and activity.type == discord.ActivityType.playing),
-                None
-            )
+            for activity in member.activities:
+                if (isinstance(activity, (discord.Game, discord.Activity)) and 
+                    activity.type == discord.ActivityType.playing):
+                    return activity.name
+            return None
         except Exception:
             return None
 
-    def _update_game_state(self, member_id: int, current_game: str):
-        """Actualiza el estado de un juego de manera eficiente"""
-        # Obtener o crear estado del juego
+    def _update_game_state_optimized(self, member_id: int, current_game: str, display_name: str):
+        """Actualización optimizada del estado de juego"""
+        # Crear estado si no existe
         if current_game not in self.games_state:
             self.games_state[current_game] = GameState()
 
-        game_state = self.games_state[current_game]
-        game_state.active_players.add(member_id)
+        state = self.games_state[current_game]
 
-        # Actualizar tiempo de inicio si es necesario
-        if not game_state.start_time and len(game_state.active_players) >= 2:
-            game_state.start_time = discord.utils.utcnow()
+        # Actualizar jugadores activos
+        state.active_players.add(member_id)
+        if display_name not in state.player_names:
+            state.player_names.append(display_name)
 
-        # Limpiar jugador de otros juegos
-        for game, state in self.games_state.items():
-            if game != current_game and member_id in state.active_players:
-                state.active_players.discard(member_id)
-                if not state.active_players:
+        # Configurar tiempo de inicio si es elegible
+        if not state.start_time and len(state.active_players) >= 2:
+            state.start_time = discord.utils.utcnow()
+
+        # Limpiar de otros juegos (optimizado)
+        for game, other_state in list(self.games_state.items()):
+            if game != current_game and member_id in other_state.active_players:
+                other_state.active_players.discard(member_id)
+                if display_name in other_state.player_names:
+                    other_state.player_names.remove(display_name)
+
+                # Limpiar estados vacíos
+                if not other_state.active_players:
+                    if game in self.eventos_activos:
+                        self.eventos_activos.discard(game)
                     del self.games_state[game]
 
-    def _process_players_for_embed(self, jugadores: List[JugadorInfo]) -> Tuple[dict, List[str], discord.Color]:
-        """Procesa jugadores para el embed y determina el color"""
-        juegos = {}
-        no_jugando = []
+        state.last_update = discord.utils.utcnow()
 
-        for jugador in jugadores:
-            if jugador.current_game:
-                juegos.setdefault(jugador.current_game, []).append(jugador.display_name)
-            else:
-                no_jugando.append(jugador.display_name)
+    async def create_game_embed_optimized(self, guild, game_name, players, is_ended=False):
+        """Embed optimizado con menos procesamiento"""
+        embed = discord.Embed(
+            title="🎮 Estado de Jugadores" if not is_ended else "🎮 Partida Finalizada",
+            description="Listado de jugadores con roles monitoreados\n─────────────────",
+            color=discord.Color.red() if is_ended else discord.Color.green(),
+            timestamp=discord.utils.utcnow()
+        )
 
-        # Determinar color basado en máximo de jugadores por juego
-        color = discord.Color.red()
-        if juegos:
-            max_jugadores = max(len(players) for players in juegos.values())
-            if max_jugadores >= 2:
-                color = discord.Color.green()
-            elif max_jugadores == 1:
-                color = discord.Color.blue()
+        if is_ended:
+            state = self.games_state.get(game_name)
+            if state and state.start_time:
+                duration = discord.utils.utcnow() - state.start_time
+                hours = int(duration.total_seconds() // 3600)
+                minutes = int((duration.total_seconds() % 3600) // 60)
 
-        return juegos, no_jugando, color
+                embed.add_field(
+                    name=f"{game_name} (Finalizado)",
+                    value=f"⏱️ Duración: {hours}h {minutes}m\n👥 Jugadores: {len(players)}",
+                    inline=False
+                )
+        else:
+            player_list = "\n".join(f"🎮 {player}" for player in players[:10])
+            if len(players) > 10:
+                player_list += f"\n*...y {len(players) - 10} más...*"
 
-    async def _download_avatar(self, session: aiohttp.ClientSession, url: str) -> Optional[Image.Image]:
-        """Descarga y prepara un avatar para combinar"""
+            embed.add_field(
+                name=f"{game_name} ({len(players)})",
+                value=player_list or "*Sin jugadores activos*",
+                inline=False
+            )
+
+        return embed
+
+    async def _download_avatar_cached(self, session: aiohttp.ClientSession, url: str) -> Optional[Image.Image]:
+        """Descarga de avatar con cache optimizada"""
+        if url in self._avatar_cache:
+            return self._avatar_cache[url]
+
         try:
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.read()
-                    # Usar BytesIO para no escribir al disco
-                    img = Image.open(io.BytesIO(data))
-                    # Convertir a RGBA y resize para uniformidad
-                    return img.convert('RGBA').resize((128, 128))
-                return None
-        except Exception:
-            return None
+                    img = Image.open(io.BytesIO(data)).convert('RGBA').resize((128, 128))
 
-    async def _create_combined_avatar(self, avatar_urls: List[str]) -> Optional[discord.File]:
-        """Crea una imagen combinada de los avatares de manera eficiente"""
+                    # Cache limitado (máximo 20 avatares)
+                    if len(self._avatar_cache) >= 20:
+                        # Remover el más antiguo
+                        self._avatar_cache.pop(next(iter(self._avatar_cache)))
+
+                    self._avatar_cache[url] = img
+                    return img
+        except Exception:
+            pass
+        return None
+
+    async def _create_combined_avatar_optimized(self, avatar_urls: List[str]) -> Optional[discord.File]:
+        """Versión optimizada de avatares combinados"""
         if not avatar_urls:
             return None
 
-        avatar_urls = avatar_urls[:4]  # Limitar a 4 avatares
+        avatar_urls = avatar_urls[:4]
 
         async with aiohttp.ClientSession() as session:
-            # Usar gather para descargas paralelas
             avatars = await asyncio.gather(
-                *[self._download_avatar(session, url) for url in avatar_urls],
+                *[self._download_avatar_cached(session, url) for url in avatar_urls],
                 return_exceptions=True
             )
 
-            # Filtrar errores y None
-            avatars = [av for av in avatars if isinstance(av, Image.Image)]
-
-            if not avatars:
+            valid_avatars = [av for av in avatars if isinstance(av, Image.Image)]
+            if not valid_avatars:
                 return None
 
-            # Usar tamaños predefinidos para optimización
-            SIZES = {
+            # Configuraciones optimizadas predefinidas
+            configs = {
                 1: ((128, 128), [(0, 0)]),
                 2: ((256, 128), [(0, 0), (128, 0)]),
                 3: ((256, 256), [(0, 0), (128, 0), (0, 128)]),
                 4: ((256, 256), [(0, 0), (128, 0), (0, 128), (128, 128)])
             }
 
-            size, positions = SIZES[len(avatars)]
+            size, positions = configs[len(valid_avatars)]
             combined = Image.new('RGBA', size, (0, 0, 0, 0))
 
-            # Combinar avatares
-            for img, pos in zip(avatars, positions):
+            for img, pos in zip(valid_avatars, positions):
                 combined.paste(img, pos, img)
 
-            # Usar buffer optimizado
             buffer = io.BytesIO()
-            combined.save(buffer, 'PNG', optimize=True)
+            combined.save(buffer, 'PNG', optimize=True, quality=85)
             buffer.seek(0)
 
             return discord.File(buffer, 'combined_avatar.png')
 
-    @commands.command(name="estado_juegos")
-    async def check_current_games(self, ctx):
-        """Muestra el estado actual de jugadores monitoreados"""
+    async def _create_and_activate_event_unified(self, guild, game_name: str, players: List[str]):
+        """Creación de evento unificada y optimizada"""
         try:
-            jugadores = await self.get_monitored_players(ctx.guild)
-            juegos, no_jugando, embed_color = self._process_players_for_embed(jugadores)
-            jugadores_mostrados = set()  # Set para trackear jugadores ya mostrados
-
-            # Primer embed para jugadores en juego
-            embed_jugando = discord.Embed(
-                title="🎮 Estado de Jugadores",
-                description="Listado de jugadores con roles monitoreados\n─────────────────",
-                color=embed_color,
-                timestamp=datetime.utcnow()
-            )
-
-            # Añadir campos de juegos con avatares combinados
-            hay_jugadores_activos = False
-            for juego, jugadores_info in sorted(juegos.items(), key=lambda x: len(x[1]), reverse=True):
-                titulo = f"{juego} ({len(jugadores_info)})"
-                if len(jugadores_info) == 1:
-                    titulo += " - ¡Falta 1 jugador para evento! 🔥"
-
-                avatar_urls = []
-                value = ""
-                jugadores_en_juego = [j for j in jugadores if j.current_game == juego][:4]
-
-                for jugador in jugadores_en_juego:
-                    jugadores_mostrados.add(jugador.display_name)  # Añadir a mostrados
-                    avatar_indicator = "🎮" if jugador.avatar_url else "•"
-                    value += f"{avatar_indicator} {jugador.display_name}\n"
-                    if jugador.avatar_url:
-                        avatar_urls.append(jugador.avatar_url)
-
-                if len(jugadores_info) > 4:
-                    value += f"*...y {len(jugadores_info) - 4} más...*\n"
-
-                embed_jugando.add_field(name=titulo, value=value, inline=False)
-                hay_jugadores_activos = True
-
-                if avatar_urls:
-                    combined_avatar = await self._create_combined_avatar(avatar_urls)
-                    if combined_avatar:
-                        embed_jugando.set_image(url="attachment://combined_avatar.png")
-                        await ctx.send(file=combined_avatar, embed=embed_jugando)
-                        break  # Solo enviamos una vez el embed con jugadores activos
-
-            # Si no hay jugadores activos, enviar el primer embed vacío
-            if not hay_jugadores_activos:
-                embed_jugando.add_field(
-                    name="Sin jugadores activos",
-                    value="*No hay jugadores en partida actualmente*",
-                    inline=False
-                )
-                await ctx.send(embed=embed_jugando)
-
-            # Segundo embed para jugadores no en juego
-            no_jugando_filtrado = [nombre for nombre in no_jugando if nombre not in jugadores_mostrados]
-            if no_jugando_filtrado:
-                embed_no_jugando = discord.Embed(
-                    title="😴 Jugadores Inactivos",
-                    color=discord.Color.light_grey(),
-                    timestamp=datetime.utcnow()
-                )
-                embed_no_jugando.add_field(
-                    name=f"No jugando ({len(no_jugando_filtrado)})",
-                    value="\n".join(f"• {nombre}" for nombre in sorted(no_jugando_filtrado)),
-                    inline=False
-                )
-                await ctx.send(embed=embed_no_jugando)
-
-        except Exception:
-            await ctx.send("❌ Ocurrió un error al procesar el estado de jugadores")
-
-    def get_next_15min_interval(self, current_time: datetime) -> datetime:
-        minutes = current_time.minute
-        next_15 = ((minutes // 15) + 1) * 15
-        next_interval = current_time.replace(
-            minute=0 if next_15 >= 60 else next_15,
-            second=0, 
-            microsecond=0
-        )
-        if next_15 >= 60:
-            next_interval += timedelta(hours=1)
-        return next_interval
-
-    async def _notify_active_game(self, guild, juego: str, channel_id: int):
-        """Notifica sobre un juego activo y pingea a Robuso si no está en el canal"""
-        try:
-            notification_channel = guild.get_channel(self.notification_channel_id)
-            voice_channel = guild.get_channel(channel_id)
-            if not notification_channel or not voice_channel:
-                return
-
-            # Comprobar si Robuso está en el canal de voz
-            robuso = guild.get_member(self.robuso_id)
-            should_ping = robuso and (
-                not robuso.voice or 
-                robuso.voice.channel.id != channel_id
-            )
-
-            # Guardar tiempo de inicio
-            self.game_start_times[juego] = discord.utils.utcnow()
-
-            # Crear embed de notificación
-            embed = discord.Embed(
-                title="🎮 ¡Partida en curso!",
-                description=f"Hay una partida de **{juego}** en marcha\n─────────────────",
-                color=discord.Color.green(),
-                timestamp=self.game_start_times[juego]
-            )
-            embed.add_field(
-                name="Estado",
-                value="✅ Partida activa",
-                inline=False
-            )
-            embed.add_field(
-                name="Inicio",
-                value=f"<t:{int(self.game_start_times[juego].timestamp())}:R>",
-                inline=True
-            )
-
-            # Añadir mención si es necesario
-            content = f"<@{self.robuso_id}> ¡Únete a la partida!" if should_ping else None
-
-            # Enviar o actualizar mensaje
-            if juego in self.notification_messages:
+            # Verificar si ya existe evento activo
+            state = self.games_state.get(game_name)
+            if state and state.event_id:
                 try:
-                    await self.notification_messages[juego].edit(content=content, embed=embed)
+                    event = discord.utils.get(await guild.fetch_scheduled_events(), id=state.event_id)
+                    if event and not event.ended:
+                        return event
                 except discord.NotFound:
-                    # Si el mensaje fue borrado, crear uno nuevo
-                    self.notification_messages[juego] = await notification_channel.send(content=content, embed=embed)
-            else:
-                self.notification_messages[juego] = await notification_channel.send(content=content, embed=embed)
+                    pass
 
-        except Exception:
-            pass
-
-    async def _update_game_ended(self, guild, juego: str):
-        """Actualiza el mensaje de notificación cuando termina la partida"""
-        try:
-            if juego in self.notification_messages:
-                end_time = discord.utils.utcnow()
-                start_time = self.game_start_times.get(juego, end_time)
-                duration = end_time - start_time
-
-                embed = discord.Embed(
-                    title="🎮 Partida finalizada",
-                    description=f"La partida de **{juego}** ha terminado\n─────────────────",
-                    color=discord.Color.red(),
-                    timestamp=end_time
-                )
-                embed.add_field(
-                    name="Estado",
-                    value="❌ Partida terminada",
-                    inline=False
-                )
-                embed.add_field(
-                    name="Inicio",
-                    value=f"<t:{int(start_time.timestamp())}:F>",
-                    inline=True
-                )
-                embed.add_field(
-                    name="Fin",
-                    value=f"<t:{int(end_time.timestamp())}:F>",
-                    inline=True
-                )
-                embed.add_field(
-                    name="Duración",
-                    value=f"{int(duration.total_seconds() / 60)} minutos",
-                    inline=True
-                )
-
-                try:
-                    await self.notification_messages[juego].edit(content=None, embed=embed)
-                except discord.NotFound:
-                    pass  # Ignorar si el mensaje fue borrado
-
-                # Limpiar tracking
-                del self.notification_messages[juego]
-                del self.game_start_times[juego]
-
-        except Exception:
-            pass
-
-    async def end_game_event(self, guild, game_name: str):
-        """Helper function para terminar eventos"""
-        try:
-            for event in guild.scheduled_events:
-                if (event.name == f"¡Jugando {game_name}!" and 
-                    event.status != discord.EventStatus.ended):
-                    await event.edit(
-                        status=discord.EventStatus.ended,
-                        end_time=discord.utils.utcnow()
-                    )
-                    self.eventos_activos.discard(game_name)
-                    self.notified_events.discard(game_name)
-                    if game_name in self.eventos_tracking:
-                        del self.eventos_tracking[game_name]
-
-                    # Actualizar mensaje de notificación
-                    await self._update_game_ended(guild, game_name)
-
-        except Exception:
-            pass
-
-    async def _create_and_activate_event(self, guild, game_name):
-        """
-        Creates and activates a game event for the specified guild and game.
-
-        Args:
-            guild: The Discord guild object
-            game_name: Name of the game to create event for
-        """
-        try:
-            # Check if there's already an active event for this game
-            if guild.id in self.active_events and game_name in self.active_events[guild.id]:
-                event_id = self.active_events[guild.id][game_name]
-                event = discord.utils.get(await guild.fetch_scheduled_events(), id=event_id)
-                if event and not event.ended:
-                    return None  # Event already exists and is active
-
-            # Usar tiempo UTC ya que estamos en la nube
             current_time = discord.utils.utcnow()
             start_time = current_time + timedelta(minutes=5)
             end_time = current_time + timedelta(hours=2)
 
             event = await guild.create_scheduled_event(
-                name=f"{game_name} Game Session",
-                description=f"Join us for a {game_name} gaming session!",
+                name=f"🎮 {game_name} Session",
+                description=f"Join us for a {game_name} gaming session! Active players: {len(players)}",
                 start_time=start_time,
                 end_time=end_time,
                 entity_type=discord.EntityType.external,
@@ -420,85 +325,292 @@ class EventosJuegos(commands.Cog):
                 location=game_name
             )
 
-            # Almacenar el evento
-            if guild.id not in self.active_events:
-                self.active_events[guild.id] = {}
-            self.active_events[guild.id][game_name] = event.id
+            # Actualizar estado
+            if not state:
+                state = GameState()
+                self.games_state[game_name] = state
 
-            # Iniciar el evento inmediatamente
+            state.event_id = event.id
+            state.start_time = current_time
+
+            # Enviar notificación optimizada
+            await self._send_optimized_notification(guild, game_name, players, event)
+
             await event.start()
-            print(f"Event created and started for {game_name} in {guild.name}")
+            self.eventos_activos.add(game_name)
+
+            # Guardar estado persistente
+            self.save_persistent_state()
+
             return event
 
         except Exception as e:
-            print(f"Error creating event: {str(e)}")
+            print(f"Error creating unified event: {e}")
             return None
 
-    @tasks.loop(seconds=20)  # Cambiado de minutes=1 a seconds=20
-    async def check_games(self):
-        current_time = discord.utils.utcnow()
+    async def _send_optimized_notification(self, guild, game_name: str, players: List[str], event):
+        """Notificación optimizada con menos recursos"""
+        try:
+            channel = self.bot.get_channel(self.NOTIFICATION_CHANNEL)
+            if not channel:
+                return
 
-        if (current_time - self.last_check).total_seconds() < self.check_interval:
-            return
+            # Verificar si Robuso necesita ping
+            robuso = guild.get_member(self.robuso_id)
+            voice_channel = guild.get_channel(self.channel_id)
+            should_ping = (robuso and voice_channel and 
+                          (not robuso.voice or robuso.voice.channel.id != self.channel_id))
 
-        self.last_check = current_time
-        guild = self.bot.guilds[0]
+            embed = await self.create_game_embed_optimized(guild, game_name, players)
 
-        # Limpiar eventos expirados
-        if guild.id in self.active_events:
-            for game_name, event_id in list(self.active_events[guild.id].items()):
-                event = discord.utils.get(await guild.fetch_scheduled_events(), id=event_id)
-                if not event or event.ended:
-                    del self.active_events[guild.id][game_name]
+            # Añadir información del evento
+            embed.add_field(
+                name="📅 Evento",
+                value=f"[Ver evento]({event.url})" if hasattr(event, 'url') else "Evento creado",
+                inline=True
+            )
 
-        # Procesar todos los estados de juego de una vez
-        for game_name, state in list(self.games_state.items()):
-            # Verificar condiciones de juego activo
-            is_active = len(state.active_players) >= 2
+            content = f"<@{self.robuso_id}> ¡Únete a la partida de {game_name}!" if should_ping else None
 
-            if not is_active:
-                if not state.tracking_start:
-                    state.tracking_start = current_time
-                elif (current_time - state.tracking_start).total_seconds() >= 900:
-                    await self.end_game_event(guild, game_name)
-            else:
-                state.tracking_start = None
-                if game_name not in self.eventos_activos:
-                    await self._create_and_activate_event(guild, game_name)
+            message = await channel.send(content=content, embed=embed)
 
-    @tasks.loop(minutes=1)
-    async def check_scheduled_events(self):
-        """Revisa y activa los eventos programados cuando sea su hora"""
+            # Actualizar estado con mensaje
+            state = self.games_state[game_name]
+            state.notification_message = message
+
+        except Exception as e:
+            print(f"Error sending notification: {e}")
+
+    async def end_event_unified(self, guild, game_name: str):
+        """Finalización unificada y optimizada de eventos"""
+        try:
+            state = self.games_state.get(game_name)
+            if not state:
+                return
+
+            # Finalizar evento de Discord
+            if state.event_id:
+                try:
+                    events = await guild.fetch_scheduled_events()
+                    event = discord.utils.get(events, id=state.event_id)
+                    if event and not event.ended:
+                        await event.edit(status=discord.EventStatus.ended)
+                except Exception:
+                    pass
+
+            # Enviar notificación de finalización
+            channel = self.bot.get_channel(self.NOTIFICATION_CHANNEL)
+            if channel:
+                embed = await self.create_game_embed_optimized(guild, game_name, state.player_names, is_ended=True)
+                await channel.send(embed=embed)
+
+            # Limpiar estado
+            self.eventos_activos.discard(game_name)
+            if game_name in self.games_state:
+                del self.games_state[game_name]
+
+            # Actualizar persistencia
+            self.save_persistent_state()
+
+        except Exception as e:
+            print(f"Error ending unified event: {e}")
+
+    @tasks.loop(seconds=30)  # Optimizado a 30 segundos
+    async def unified_game_monitor(self):
+        """Task principal optimizado que combina todas las funciones de monitoreo"""
         try:
             current_time = discord.utils.utcnow()
 
+            # Control de frecuencia optimizado
+            if (current_time - self.last_check).total_seconds() < self.check_interval:
+                return
+
+            self.last_check = current_time
+
             for guild in self.bot.guilds:
                 try:
-                    scheduled_events = guild.scheduled_events
+                    # Obtener jugadores con cache
+                    jugadores = await self.get_monitored_players_cached(guild)
 
-                    for event in scheduled_events:
-                        if (event.status == discord.EventStatus.scheduled and 
-                            event.start_time <= current_time):
-                            try:
-                                await event.edit(status=discord.EventStatus.active)
-                            except (discord.Forbidden, discord.HTTPException):
-                                pass
+                    # Procesar estados de juego de manera optimizada
+                    active_games = {}
+                    for jugador in jugadores:
+                        if jugador.current_game:
+                            if jugador.current_game not in active_games:
+                                active_games[jugador.current_game] = []
+                            active_games[jugador.current_game].append(jugador.display_name)
 
-                except (discord.Forbidden, Exception):
-                    pass
+                    # Procesar cada juego activo
+                    for game_name, players in active_games.items():
+                        if len(players) >= 2:  # Mínimo 2 jugadores
+                            if game_name not in self.eventos_activos:
+                                await self._create_and_activate_event_unified(guild, game_name, players)
 
-        except Exception:
-            pass
+                        # Actualizar estado del juego
+                        if game_name in self.games_state:
+                            state = self.games_state[game_name]
+                            state.player_names = players
+                            state.last_update = current_time
 
-    @check_scheduled_events.before_loop
-    async def before_check_scheduled_events(self):
-        """Espera a que el bot esté listo antes de iniciar la tarea"""
+                    # Limpiar juegos inactivos (optimizado)
+                    for game_name in list(self.games_state.keys()):
+                        if game_name not in active_games:
+                            state = self.games_state[game_name]
+
+                            if not state.tracking_start:
+                                state.tracking_start = current_time
+                            elif (current_time - state.tracking_start).total_seconds() >= 900:  # 15 minutos
+                                await self.end_event_unified(guild, game_name)
+                        else:
+                            # Reset tracking si vuelve a estar activo
+                            state = self.games_state[game_name]
+                            state.tracking_start = None
+
+                    # Limpiar mensajes antiguos (cada hora)
+                    if current_time.minute == 0:
+                        await self._cleanup_old_data(guild, current_time)
+
+                except Exception as e:
+                    print(f"Error processing guild {guild.name}: {e}")
+                    continue
+
+        except Exception as e:
+            print(f"Error in unified_game_monitor: {e}")
+
+    async def _cleanup_old_data(self, guild, current_time):
+        """Limpieza optimizada de datos antiguos"""
+        try:
+            # Limpiar cache de miembros cada hora
+            if guild.id in self._member_cache:
+                del self._member_cache[guild.id]
+                del self._last_member_update[guild.id]
+
+            # Limpiar cache de avatares (mantener solo los 10 más recientes)
+            if len(self._avatar_cache) > 10:
+                keys_to_remove = list(self._avatar_cache.keys())[:-10]
+                for key in keys_to_remove:
+                    del self._avatar_cache[key]
+
+        except Exception as e:
+            print(f"Error in cleanup: {e}")
+
+    @commands.command(name="estado_juegos")
+    async def check_current_games_optimized(self, ctx):
+        """Comando optimizado para mostrar estado de jugadores"""
+        try:
+            jugadores = await self.get_monitored_players_cached(ctx.guild)
+
+            # Procesamiento optimizado
+            juegos = {}
+            no_jugando = []
+
+            for jugador in jugadores:
+                if jugador.current_game:
+                    if jugador.current_game not in juegos:
+                        juegos[jugador.current_game] = []
+                    juegos[jugador.current_game].append(jugador)
+                else:
+                    no_jugando.append(jugador.display_name)
+
+            # Determinar color
+            color = discord.Color.red()
+            if juegos:
+                max_players = max(len(players) for players in juegos.values())
+                color = discord.Color.green() if max_players >= 2 else discord.Color.blue()
+
+            # Crear embed principal
+            embed_main = discord.Embed(
+                title="🎮 Estado de Jugadores",
+                description="Listado de jugadores con roles monitoreados\n─────────────────",
+                color=color,
+                timestamp=discord.utils.utcnow()
+            )
+
+            # Añadir juegos activos
+            has_active_games = False
+            combined_avatar = None
+
+            for juego, jugadores_info in sorted(juegos.items(), key=lambda x: len(x[1]), reverse=True):
+                players_names = [j.display_name for j in jugadores_info]
+                titulo = f"{juego} ({len(players_names)})"
+
+                if len(players_names) == 1:
+                    titulo += " - ¡Falta 1 jugador! 🔥"
+
+                value = "\n".join(f"🎮 {name}" for name in players_names[:10])
+                if len(players_names) > 10:
+                    value += f"\n*...y {len(players_names) - 10} más...*"
+
+                embed_main.add_field(name=titulo, value=value, inline=False)
+                has_active_games = True
+
+                # Crear avatar combinado solo para el primer juego con más jugadores
+                if not combined_avatar and len(jugadores_info) >= 2:
+                    avatar_urls = [j.avatar_url for j in jugadores_info[:4] if j.avatar_url]
+                    if avatar_urls:
+                        combined_avatar = await self._create_combined_avatar_optimized(avatar_urls)
+
+            if not has_active_games:
+                embed_main.add_field(
+                    name="Sin jugadores activos",
+                    value="*No hay jugadores en partida actualmente*",
+                    inline=False
+                )
+
+            # Enviar embed principal
+            if combined_avatar:
+                embed_main.set_image(url="attachment://combined_avatar.png")
+                await ctx.send(file=combined_avatar, embed=embed_main)
+            else:
+                await ctx.send(embed=embed_main)
+
+            # Embed secundario para jugadores inactivos
+            if no_jugando:
+                embed_inactive = discord.Embed(
+                    title="😴 Jugadores Inactivos",
+                    color=discord.Color.light_grey(),
+                    timestamp=discord.utils.utcnow()
+                )
+
+                value = "\n".join(f"• {name}" for name in sorted(no_jugando))
+                embed_inactive.add_field(
+                    name=f"No jugando ({len(no_jugando)})",
+                    value=value,
+                    inline=False
+                )
+                await ctx.send(embed=embed_inactive)
+
+        except Exception as e:
+            await ctx.send("❌ Error al procesar el estado de jugadores")
+            print(f"Error in check_current_games_optimized: {e}")
+
+    @unified_game_monitor.before_loop
+    async def before_unified_monitor(self):
+        """Preparación antes del loop principal"""
         await self.bot.wait_until_ready()
 
+        # Restaurar eventos activos desde persistencia
+        try:
+            for guild in self.bot.guilds:
+                for game_name, state in self.games_state.items():
+                    if state.event_id:
+                        self.eventos_activos.add(game_name)
+        except Exception as e:
+            print(f"Error restoring active events: {e}")
+
     def cog_unload(self):
-        """Limpieza al descargar el cog"""
-        self.check_games.cancel()
-        self.check_scheduled_events.cancel()
+        """Limpieza optimizada al descargar"""
+        try:
+            self.unified_game_monitor.cancel()
+            self.save_persistent_state()
+
+            # Limpiar caches
+            self._member_cache.clear()
+            self._last_member_update.clear()
+            self._avatar_cache.clear()
+
+        except Exception as e:
+            print(f"Error during cog unload: {e}")
 
 async def setup(bot):
-    await bot.add_cog(EventosJuegos(bot))
+    await bot.add_cog(EventosJuegosOptimizado(bot))

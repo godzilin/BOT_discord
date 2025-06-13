@@ -1,10 +1,16 @@
 import discord
 from discord.ext import commands
-import cv2
-import numpy as np
 import os
 import io
 from PIL import Image
+
+try:
+    import cv2
+    import numpy as np
+    OPENCV_AVAILABLE = True
+except ImportError as e:
+    print(f"OpenCV or numpy import failed: {e}")
+    OPENCV_AVAILABLE = False
 
 class Magik(commands.Cog):
     def __init__(self, bot):
